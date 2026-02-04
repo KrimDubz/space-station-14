@@ -1,6 +1,8 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using Content.Client._Starlight.Radio.Systems;
+using Content.Client._Starlight.TextToSpeech;
 using Content.Shared.Starlight.CCVar;
 using Content.Shared.Starlight.TextToSpeech;
 using Robust.Client.Audio;
@@ -11,6 +13,9 @@ using Robust.Shared.Configuration;
 using Robust.Shared.ContentPack;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Random;
+using Robust.Shared.Spawners;
+using Robust.Shared.Timing;
+using Robust.Shared.Utility;
 
 namespace Content.Client._Starlight.TTS;
 
@@ -27,7 +32,7 @@ public sealed class TextToSpeechSystem : EntitySystem
     [Dependency] private readonly IPrototypeManager _proto = default!;
     [Dependency] private readonly RadioChimeSystem _chime = default!;
 
-    private readonly ConcurrentQueue<(byte[] file, SoundSpecifier? specifier, float volume)> _ttsQueue = [];
+    private readonly ConcurrentQueue<(Queue<byte[]> data, SoundSpecifier? specifier, float volume)> _ttsQueue = [];
     private ISawmill _sawmill = default!;
     private readonly MemoryContentRoot _contentRoot = new();
     private (EntityUid Entity, AudioComponent Component)? _currentPlaying;
@@ -45,10 +50,8 @@ public sealed class TextToSpeechSystem : EntitySystem
         _cfg.OnValueChanged(StarlightCCVars.TTSRadioVolume, OnTtsRadioVolumeChanged, true);
         _cfg.OnValueChanged(StarlightCCVars.TTSRadioQueueEnabled, OnTtsRadioQueueChanged, true);
         _cfg.OnValueChanged(StarlightCCVars.TTSClientEnabled, OnTtsClientOptionChanged, true);
-        SubscribeNetworkEvent<PlayTTSEvent>(OnPlayTTS);
-        SubscribeNetworkEvent<AnnounceTtsEvent>(OnAnnounceTTSPlay);
-        SubscribeLocalEvent<ClientTTSAudioComponent, ComponentRemove>(OnClientTTSAudioRemove);
-        SubscribeLocalEvent<ClientTTSAudioComponent, EntityTerminatingEvent>(OnClientTTSAudioRemove);
+        SubscribeLocalEvent<TTSStream>(OnTTSStream);
+        //SubscribeNetworkEvent<AnnounceTtsEvent>(OnAnnounceTTSPlay);
     }
 
     public override void Shutdown()
@@ -80,29 +83,8 @@ public sealed class TextToSpeechSystem : EntitySystem
     private void OnTtsClientOptionChanged(bool option)
         => RaiseNetworkEvent(new ClientOptionTTSEvent { Enabled = option });
 
-    private void OnAnnounceTTSPlay(AnnounceTtsEvent ev)
-        => _ttsQueue.Enqueue((ev.Data, ev.AnnouncementSound, _announceVolume));
-
-    private void OnClientTTSAudioRemove<T>(Entity<ClientTTSAudioComponent> ent, ref T args)
-    {
-        if (ent.Comp.Stream is not { } stream)
-            return;
-
-        try
-        {
-            // Setting capacity to 0 makes MemoryStream drop the reference to its buffer (byte array),
-            // letting it be garbage collected
-            // Dispose does not do this, at least as of time of writing
-            stream.Capacity = 0;
-
-            // We also dispose it since we don't want it to be reused after the data is dropped
-            stream.Dispose();
-        }
-        catch
-        {
-            // ignored, stream might be closed but we don't care as long as the data goes away
-        }
-    }
+    //private void OnAnnounceTTSPlay(AnnounceTtsEvent ev)
+    //    => _ttsQueue.Enqueue((ev.Data, ev.AnnouncementSound, _announceVolume));
 
     private void PlayQueue()
     {
@@ -114,14 +96,19 @@ public sealed class TextToSpeechSystem : EntitySystem
 
         if (entry.specifier != null)
             _currentPlaying = _audio.PlayGlobal(_sharedAudio.ResolveSound(entry.specifier), EntityUid.Invalid, finalParams.AddVolume(-5f));
-        _currentPlaying = PlayTTSBytes(entry.file, null, finalParams, true);
+        _currentPlaying = PlayTTSBytes(entry.data, null, finalParams);
     }
 
-    private void OnPlayTTS(PlayTTSEvent ev)
+    private void OnTTSStream(TTSStream ev)
     {
-        var volume = ev.IsRadio ? _radioVolume : _volume;
+        var volume = ev.Type switch
+        {
+            TTSType.Announcement => _announceVolume,
+            TTSType.Radio => _radioVolume,
+            _ => _volume    
+        };
 
-        if (ev.IsRadio && _ttsQueueEnabled)
+        if (ev.Type == TTSType.Announcement || (ev.Type == TTSType.Radio && _ttsQueueEnabled))
         {
             _ttsQueue.Enqueue((ev.Data, !_chime.IsMuted ? ev.Chime : null, _radioVolume));
         }
@@ -138,32 +125,78 @@ public sealed class TextToSpeechSystem : EntitySystem
         }
     }
 
-    private (EntityUid Entity, AudioComponent Component)? PlayTTSBytes(byte[] data, EntityUid? sourceUid = null, AudioParams? audioParams = null, bool globally = false)
+    private (EntityUid Entity, AudioComponent Component)? PlayTTSBytes(
+        Queue<byte[]> data,
+        EntityUid? sourceUid = null,
+        AudioParams? audioParams = null,
+        float prependSilence = 0f,
+        IStopwatch? stopwatch = null)
     {
-        if (data.Length < 50 || sourceUid != null && sourceUid.Value.Id == 0 && !globally)
-            return null;
+        try
+        {
+            if(!data.TryDequeue(out var audioBytes))
+            {
+                _sawmill.Debug("queue is empty");
+                return null;
+            }
 
-        _sawmill.Debug($"Play TTS audio {data.Length} bytes");
+            if (audioBytes.Length < 10 || (sourceUid != null && sourceUid.Value.Id == 0))
+                return null;
 
-        var @params = audioParams ?? AudioParams.Default;
-        using var stream = new MemoryStream(data);
-        var audioStream = _audioManager.LoadAudioOggVorbis(stream);
+            _sawmill.Debug($"Play TTS chunk: {audioBytes.Length}, prependSilence: {prependSilence:F3}s");
 
-        var ent = globally
-            ? _audio.PlayGlobal(audioStream, null, @params)
-            : sourceUid != null
+            var @params = audioParams ?? AudioParams.Default;
+            var audioStream = _audioManager.LoadAudioOggVorbis(new MemoryStream(audioBytes));
+
+            var ent = sourceUid != null
                 ? _audio.PlayEntity(audioStream, sourceUid.Value, null, @params)
                 : _audio.PlayGlobal(audioStream, null, @params);
 
-        if (ent != null)
-            EnsureComp<ClientTTSAudioComponent>(ent.Value.Entity).Stream = stream;
+            if (ent != null)
+            {
+                var comp = EnsureComp<TTSAudioStreamComponent>(ent.Value.Entity);
+                comp.Data = data;
+                comp.SourceUid = sourceUid;
+                comp.AudioParams = audioParams;
+                var silencePadding = Math.Clamp(0.1f - (prependSilence + (float)(stopwatch?.Elapsed.TotalSeconds ?? 0)), 0f, 0.1f);
+                ent.Value.Component.PlaybackPosition = silencePadding;
+                _sawmill.Debug($"silencePadding: {silencePadding:F3}s");
+            }
 
-        return ent;
+            return ent;
+        }
+        catch (Exception ex)
+        {
+            _sawmill.Error($"Error playing TTS audio: {ex.Message}", ex);
+        }
+
+        return null;
     }
 
     public override void Update(float frameTime)
     {
         base.Update(frameTime);
+
+        var toPlay = new List<(Queue<byte[]> Data, EntityUid? SourceUid, AudioParams? Params, float Silence)>();
+        var query = EntityQueryEnumerator<TTSAudioStreamComponent, TimedDespawnComponent>();
+        var stopwatch = new Stopwatch();
+        stopwatch.Start();
+
+        while (query.MoveNext(out var uid, out var ttsComp, out var despawnComponent))
+        {
+            if (ttsComp.Handled)
+                continue;
+            var timeRemaining = despawnComponent.Lifetime - SharedAudioSystem.AudioDespawnBuffer - 0.2f;
+
+            if (timeRemaining < 0.066f)
+            {
+                ttsComp.Handled = true;
+                toPlay.Add((ttsComp.Data, ttsComp.SourceUid, ttsComp.AudioParams, timeRemaining));
+            }
+        }
+
+        foreach (var (data, sourceUid, audioParams, silence) in toPlay)
+            PlayTTSBytes(data, sourceUid, audioParams, silence, stopwatch);
 
         if (_currentPlaying.HasValue)
         {

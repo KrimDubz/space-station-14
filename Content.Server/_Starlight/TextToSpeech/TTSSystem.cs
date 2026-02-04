@@ -3,8 +3,8 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Content.Server._Starlight.Language;
 using Content.Server._Starlight.Radio.Systems;
+using Content.Server._Starlight.TextToSpeech;
 using Content.Server.Chat.Systems;
-using Content.Server.Starlight.TextToSpeech;
 using Content.Shared._Starlight.Language;
 using Content.Shared.Chat;
 using Content.Shared.Humanoid;
@@ -28,7 +28,7 @@ public sealed partial class TTSSystem : EntitySystem
     [Dependency] private readonly RadioChimeSystem _chime = default!;
     [Dependency] private readonly IConfigurationManager _cfg = default!;
     [Dependency] private readonly IPrototypeManager _prototypeManager = default!;
-    [Dependency] private readonly ITTSManager _ttsManager = default!;
+    [Dependency] private readonly ITTSClient _client = default!;
     [Dependency] private readonly IRobustRandom _rng = default!;
     [Dependency] private readonly LanguageSystem _language = default!;
 
@@ -45,7 +45,7 @@ public sealed partial class TTSSystem : EntitySystem
     private const float WhisperVoiceVolumeModifier = 0.6f;
     private const int WhisperVoiceRange = 3;
 
-    private readonly ISawmill _sawmill = Logger.GetSawmill("tts-system");
+    private readonly ISawmill _sawmill = Logger.GetSawmill(nameof(TTSSystem));
     private readonly List<ICommonSession> _ignoredRecipients = [];
 
     private bool _isEnabled;
@@ -66,16 +66,25 @@ public sealed partial class TTSSystem : EntitySystem
 
     private async void OnRequestPreviewTTS(PreviewTTSRequestEvent ev, EntitySessionEventArgs args)
     {
-        if (!_isEnabled ||
-            !_prototypeManager.TryIndex<VoicePrototype>(ev.VoiceId, out var protoVoice))
-            return;
+        await Task.Yield();
+        try
+        {
+            if (!_isEnabled ||
+                !_prototypeManager.TryIndex<VoicePrototype>(ev.VoiceId, out var protoVoice))
+                return;
 
-        var previewText = _rng.Pick(_sampleText);
-        var soundData = await GenerateTTS(previewText, protoVoice.Voice);
-        if (soundData is null)
-            return;
+            var previewText = _rng.Pick(_sampleText);
+            var id = Guid.NewGuid();
+            var filter = Filter.SinglePlayer(args.SenderSession);
+            RaiseNetworkEvent(new TTSHeaderEvent { Id = id, Type = TTSType.System }, filter, false);
 
-        RaiseNetworkEvent(new PlayTTSEvent { Data = soundData }, Robust.Shared.Player.Filter.SinglePlayer(args.SenderSession), false);
+            await foreach (var chunk in _client.GenerateTTS(previewText, protoVoice.Voice))
+                RaiseNetworkEvent(new TTSChunkEvent { Id = id, Data = chunk }, filter, false);
+        }
+        catch (Exception ex)
+        {
+            _sawmill.Error($"TTS Preview error: {ex.Message}");
+        }
     }
 
     private async void OnClientOptionTTS(ClientOptionTTSEvent ev, EntitySessionEventArgs args)
@@ -224,82 +233,82 @@ public sealed partial class TTSSystem : EntitySystem
     }
     private async void HandleSay(EntityUid uid, string message, int voice, LanguagePrototype language)
     {
-        var recipients = Filter.Pvs(uid, 1F).RemovePlayers(_ignoredRecipients);
+        //var recipients = Filter.Pvs(uid, 1F).RemovePlayers(_ignoredRecipients);
 
-        var soundData = await GenerateTTS(message, voice);
+        //var soundData = await GenerateTTS(message, voice);
 
-        if (soundData is null)
-            return;
+        //if (soundData is null)
+        //    return;
 
-        foreach (var session in recipients.Recipients)
-            if (session.AttachedEntity.HasValue
-            && session.AttachedEntity != uid
-            && !_language.CanUnderstand(session.AttachedEntity.Value, language.ID))
-                recipients.RemovePlayer(session);
+        //foreach (var session in recipients.Recipients)
+        //    if (session.AttachedEntity.HasValue
+        //    && session.AttachedEntity != uid
+        //    && !_language.CanUnderstand(session.AttachedEntity.Value, language.ID))
+        //        recipients.RemovePlayer(session);
 
-        if (TryComp<EyeComponent>(uid, out var eye) && eye is not null)
-        {
-            recipients.RemovePlayerByAttachedEntity(uid);
+        //if (TryComp<EyeComponent>(uid, out var eye) && eye is not null)
+        //{
+        //    recipients.RemovePlayerByAttachedEntity(uid);
 
-            if (_language.CanUnderstand(uid, language.ID))
-            {
-                RaiseNetworkEvent(new PlayTTSEvent
-                {
-                    Data = soundData,
-                    SourceUid = GetNetEntity(eye.Target)
-                }, Filter.Empty().FromEntities(uid), false);
-            }
-        }
+        //    if (_language.CanUnderstand(uid, language.ID))
+        //    {
+        //        RaiseNetworkEvent(new PlayTTSEvent
+        //        {
+        //            Data = soundData,
+        //            SourceUid = GetNetEntity(eye.Target)
+        //        }, Filter.Empty().FromEntities(uid), false);
+        //    }
+        //}
 
-        RaiseNetworkEvent(new PlayTTSEvent
-        {
-            Data = soundData,
-            SourceUid = GetNetEntity(uid)
-        }, recipients, false);
+        //RaiseNetworkEvent(new PlayTTSEvent
+        //{
+        //    Data = soundData,
+        //    SourceUid = GetNetEntity(uid)
+        //}, recipients, false);
     }
 
     private async void HandleWhisper(EntityUid uid, string message, int voice, LanguagePrototype language)
     {
-        var soundData = await GenerateTTS(message, voice);
-        if (soundData is null)
-            return;
+        //var soundData = await GenerateTTS(message, voice);
+        //if (soundData is null)
+        //    return;
 
-        var transformQuery = GetEntityQuery<TransformComponent>();
-        var sourcePos = _xforms.GetWorldPosition(transformQuery.GetComponent(uid), transformQuery);
-        var receptions = Filter.Pvs(uid).Recipients;
-        foreach (var session in receptions)
-        {
-            if (!session.AttachedEntity.HasValue
-                || _ignoredRecipients.Contains(session))
-                continue;
+        //var transformQuery = GetEntityQuery<TransformComponent>();
+        //var sourcePos = _xforms.GetWorldPosition(transformQuery.GetComponent(uid), transformQuery);
+        //var receptions = Filter.Pvs(uid).Recipients;
+        //foreach (var session in receptions)
+        //{
+        //    if (!session.AttachedEntity.HasValue
+        //        || _ignoredRecipients.Contains(session))
+        //        continue;
 
-            if (!_language.CanUnderstand(session.AttachedEntity.Value, language.ID))
-                continue;
+        //    if (!_language.CanUnderstand(session.AttachedEntity.Value, language.ID))
+        //        continue;
 
-            var transform = transformQuery.GetComponent(session.AttachedEntity.Value);
-            var distance = (sourcePos - _xforms.GetWorldPosition(transform, transformQuery)).LengthSquared();
+        //    var transform = transformQuery.GetComponent(session.AttachedEntity.Value);
+        //    var distance = (sourcePos - _xforms.GetWorldPosition(transform, transformQuery)).LengthSquared();
 
-            if (distance > WhisperVoiceRange)
-                continue;
+        //    if (distance > WhisperVoiceRange)
+        //        continue;
 
-            if (session.AttachedEntity == uid && TryComp<EyeComponent>(uid, out var eye) && eye is not null)
-            {
-                RaiseNetworkEvent(new PlayTTSEvent
-                {
-                    Data = soundData,
-                    SourceUid = GetNetEntity(eye.Target)
-                }, Filter.Empty().FromEntities(uid), false);
-            }
-            else
-            {
-                RaiseNetworkEvent(new PlayTTSEvent
-                {
-                    Data = soundData,
-                    SourceUid = GetNetEntity(uid),
-                    VolumeModifier = WhisperVoiceVolumeModifier * (1f - distance / WhisperVoiceRange)
-                }, session);
-            }
-        }
+        //    if (session.AttachedEntity == uid && TryComp<EyeComponent>(uid, out var eye) && eye is not null)
+        //    {
+        //        RaiseNetworkEvent(new PlayTTSEvent
+        //        {
+        //            Data = soundData,
+        //            SourceUid = GetNetEntity(eye.Target)
+        //        }, Filter.Empty().FromEntities(uid), false);
+        //    }
+        //    else
+        //    {
+        //        RaiseNetworkEvent(new PlayTTSEvent
+        //        {
+        //            Data = soundData,
+        //            SourceUid = GetNetEntity(uid),
+        //            VolumeModifier = WhisperVoiceVolumeModifier * (1f - distance / WhisperVoiceRange)
+        //        }, session);
+        //    }
+        //}
     }
 
     private async void HandleRadio(EntityUid[] uIds, string message, int voice, SoundSpecifier? chime, LanguagePrototype language)
@@ -314,7 +323,7 @@ public sealed partial class TTSSystem : EntitySystem
         if (soundData is null)
             return;
 
-        RaiseNetworkEvent(new PlayTTSEvent { IsRadio = true, Chime = chime, Data = soundData }, recipients, false);
+        //RaiseNetworkEvent(new PlayTTSEvent { IsRadio = true, Chime = chime, Data = soundData }, recipients, false);
     }
 
     private async void HandleCollectiveMind(EntityUid[] uIds, string message, int voice)
@@ -323,7 +332,7 @@ public sealed partial class TTSSystem : EntitySystem
         if (soundData is null)
             return;
 
-        RaiseNetworkEvent(new PlayTTSEvent { IsRadio = true, Data = soundData }, Filter.Entities(uIds).RemovePlayers(_ignoredRecipients), false);
+        //RaiseNetworkEvent(new PlayTTSEvent { IsRadio = true, Data = soundData }, Filter.Entities(uIds).RemovePlayers(_ignoredRecipients), false);
     }
 
     private async Task<byte[]?> GenerateTTS(string text, int voice, bool isRadio = false, bool isAnnounce = false)
@@ -339,11 +348,13 @@ public sealed partial class TTSSystem : EntitySystem
             if (char.IsLetter(text[^1]))
                 text += ".";
 
-            return isRadio
-                ? await _ttsManager.ConvertTextToSpeechRadio(voice, text)
-                : isAnnounce
-                    ? await _ttsManager.ConvertTextToSpeechAnnounce(voice, text)
-                    : await _ttsManager.ConvertTextToSpeechStandard(voice, text);
+            return null;
+
+            //return isRadio
+                //? await _ttsManager.ConvertTextToSpeechRadio(voice, text)
+                //: isAnnounce
+                //    ? await _ttsManager.ConvertTextToSpeechAnnounce(voice, text)
+                //    : await _ttsManager.ConvertTextToSpeechStandard(voice, text);
         }
         catch (Exception e)
         {
@@ -360,9 +371,9 @@ public sealed partial class TTSSystem : EntitySystem
     private static readonly IReadOnlyDictionary<string, string> _wordReplacement =
         new Dictionary<string, string>()
         {
-            {"id", "Ai Di"},
-            {"pda", "PiDiA"},
-            {"sci", "sai"},
+            //{"id", "Ai Di"},
+            //{"pda", "PiDiA"},
+            //{"sci", "sai"},
 
             //owo
             {"(•`ω´•)", "meow"},
