@@ -307,7 +307,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         var critCheckEvent = new LoocCritCheckEvent(source);
         RaiseLocalEvent(source, critCheckEvent, true);
         if (!_critLoocEnabled && _mobStateSystem.IsCritical(source) && !critCheckEvent.AllowCritLooc)
-        // Starlight edit End
+            // Starlight edit End
             return;
 
         // Systems can differentiate Looc and DeadChat by type, and cancel the speak attempt if necessary.
@@ -349,7 +349,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         RaiseLocalEvent(new AnnouncementSpokeEvent
         {
             Message = message,
-            Source = Filter.Broadcast(),
+            Receivers = Filter.Broadcast(),
             AnnouncementSound = announcementSound,
         });
         _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Global station announcement from {sender}: {message}");
@@ -377,7 +377,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         {
             AnnouncementSound = announcementSound,
             Message = message,
-            Source = filter
+            Receivers = filter
         });
         _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Station Announcement from {sender}: {message}");
     }
@@ -417,7 +417,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         {
             AnnouncementSound = announcementSound,
             Message = message,
-            Source = filter
+            Receivers = filter
         });
 
         _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Station Announcement on {station} from {sender}: {message}");
@@ -439,6 +439,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         string? sender = null,
         bool playSound = true,
         SoundSpecifier? announcementSound = null,
+        EntityUid? speaker = null, // Starlight
         Color? colorOverride = null)
     {
         sender ??= Loc.GetString("chat-manager-sender-announcement");
@@ -471,7 +472,8 @@ public sealed partial class ChatSystem : SharedChatSystem
         {
             AnnouncementSound = announcementSound,
             Message = message,
-            Source = filter
+            SpeakerUid = speaker.HasValue ? GetNetEntity(speaker.Value) : null,
+            Receivers = filter
         });
 
         _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Communications Console Announcement on {station} from {sender}: {message}");
@@ -587,12 +589,12 @@ public sealed partial class ChatSystem : SharedChatSystem
         if (!_actionBlocker.CanSpeak(source) && !ignoreActionBlocker)
             return;
 
-        var message = TransformSpeech(source, originalMessage, language); // Starlight-edit: Languages
+        var message = TransformSpeech(source, originalMessage, language); // Starlight-edit: Languages, tts v5.0
 
-        if (message.Length == 0)
+        if (message.message.Length == 0) // Starlight
             return;
 
-        var speech = GetSpeechVerb(source, message);
+        var speech = GetSpeechVerb(source, message.message); // Starlight
 
         // get the entity's apparent name (if no override provided).
         string name;
@@ -806,7 +808,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         var critCheckEvent = new LoocCritCheckEvent(source);
         RaiseLocalEvent(source, critCheckEvent, true);
         if (!_critLoocEnabled && _mobStateSystem.IsCritical(source) && !critCheckEvent.AllowCritLooc)
-        // Starlight edit End
+            // Starlight edit End
             return;
 
         var wrappedMessage = Loc.GetString("chat-manager-entity-looc-wrap-message",
@@ -994,15 +996,15 @@ public sealed partial class ChatSystem : SharedChatSystem
         return newMessage;
     }
 
-    public string TransformSpeech(EntityUid sender, string message, LanguagePrototype language) // Starlight
+    public (string text, string ttsText) TransformSpeech(EntityUid sender, string message, LanguagePrototype language) // Starlight
     {
         if (!language.SpeechOverride.RequireSpeech) // Starlight
-            return message; // Do not apply speech accents if there's no speech involved.
+            return (message, message); // Do not apply speech accents if there's no speech involved.
 
-        var ev = new TransformSpeechEvent(sender, message);
+        var ev = new TransformSpeechEvent(sender, message, message);
         RaiseLocalEvent(ev);
 
-        return ev.Message;
+        return (ev.Message, ev.TTSMessage);// Starlight
     }
 
     public bool CheckIgnoreSpeechBlocker(EntityUid sender, bool ignoreBlocker)

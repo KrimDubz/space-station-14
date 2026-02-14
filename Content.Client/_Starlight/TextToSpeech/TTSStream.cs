@@ -11,7 +11,6 @@ public sealed class TTSStream : EntityEventArgs
     public NetEntity? SourceUid { get; init; }
     public SoundSpecifier? Chime { get; init; }
     public float VolumeModifier { get; init; } = 1f;
-    public bool IsWav { get; set; }
     public bool IsStarted { get; set; }
     public Queue<byte[]> Data { get; } = new();
 }

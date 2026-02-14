@@ -27,6 +27,7 @@ using Content.Shared.Speech;
 using Content.Shared.Station.Components;
 using Robust.Shared.Player;
 using Robust.Shared.Timing;
+using Content.Shared.Speech.Muting;
 // Starlight End
 
 namespace Content.Server.Communications
@@ -278,6 +279,8 @@ namespace Content.Server.Communications
             var accentEv = new AccentGetEvent(uid, msg);
             RaiseLocalEvent(uid,accentEv);
             msg = accentEv.Message;
+
+            EntityUid? speaker = null;
             //#endregion Starlight
             var author = Loc.GetString("comms-console-announcement-unknown-sender");
             if (message.Actor is { Valid: true } mob)
@@ -292,6 +295,11 @@ namespace Content.Server.Communications
                     _popupSystem.PopupEntity(Loc.GetString("comms-console-permission-denied"), uid, message.Actor);
                     return;
                 }
+
+                // Starlight start
+                if (!HasComp<MutedComponent>(mob))
+                    speaker = mob; 
+                // Starlight end
 
                 var tryGetIdentityShortInfoEvent = new TryGetIdentityShortInfoEvent(uid, mob);
                 RaiseLocalEvent(tryGetIdentityShortInfoEvent);
@@ -319,7 +327,7 @@ namespace Content.Server.Communications
                 return;
             }
 
-            _chatSystem.DispatchCommunicationsConsoleAnnouncement(uid, msg, title, announcementSound: comp.Sound, colorOverride: comp.Color); // 🌟Starlight🌟
+            _chatSystem.DispatchCommunicationsConsoleAnnouncement(uid, msg, title, announcementSound: comp.Sound, speaker: speaker, colorOverride: comp.Color); // 🌟Starlight🌟
             //Starlight begin
             foreach (var grid in comp.AdditionalGrids)
             {

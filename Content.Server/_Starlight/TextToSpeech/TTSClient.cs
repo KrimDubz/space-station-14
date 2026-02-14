@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -17,11 +16,9 @@ public sealed class TTSClient : ITTSClient
     [Dependency] private readonly IConfigurationManager _cfg = default!;
 
     private const string Queue = "tts_jobs";
-    private const int VorbisPageSize = 4096;
     private const int TimeoutS = 5;
-    private const int TimeoutChunkMs = 100;
 
-    private static readonly byte[] EndMarker = "__END__"u8.ToArray();
+    private static readonly byte[] _endMarker = "__END__"u8.ToArray();
 
     private static readonly Histogram _timeToFirstChunk = Metrics.CreateHistogram(
         "tts_time_to_first_chunk_seconds",
@@ -94,13 +91,23 @@ public sealed class TTSClient : ITTSClient
         if (await GetCache(text, voice, effect) is byte[] cached)
         {
             _cacheHits.Inc();
-            for (var offset = 0; offset < cached.Length; offset += VorbisPageSize)
+
+            var offset = 0;
+            while (offset + 4 <= cached.Length)
             {
-                var length = Math.Min(VorbisPageSize, cached.Length - offset);
+                var length = BitConverter.ToUInt32(cached, offset);
+                offset += 4;
+
+                if (offset + length > cached.Length)
+                    break;
+
                 var chunk = new byte[length];
-                Buffer.BlockCopy(cached, offset, chunk, 0, length);
+                Buffer.BlockCopy(cached, offset, chunk, 0, (int)length);
+                offset += (int)length;
+
                 yield return chunk;
             }
+
             yield return [];
             yield break;
         }
@@ -147,7 +154,7 @@ public sealed class TTSClient : ITTSClient
         await _subscriber.SubscribeAsync(RedisChannel.Literal(channel), (_, message) =>
         {
             var data = (byte[])message!;
-            if (data.SequenceEqual(EndMarker))
+            if (data.SequenceEqual(_endMarker))
                 completed = true;
             else if (data.Length > 1)
             {

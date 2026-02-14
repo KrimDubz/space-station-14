@@ -12,4 +12,5 @@ public sealed partial class TTSAudioStreamComponent : Component
     public EntityUid? SourceUid { get; set; }
     public AudioParams? AudioParams { get; set; }
     public bool Handled { get; set; }
+    public TimeSpan AudioLength { get; internal set; }
 }

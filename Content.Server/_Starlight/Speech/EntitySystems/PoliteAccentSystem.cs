@@ -15,11 +15,5 @@ public sealed class PoliteAccentSystem : EntitySystem
     }
 
     private void OnAccent(EntityUid uid, PoliteAccentComponent component, AccentGetEvent args)
-    {
-        var message = args.Message;
-
-        message = _replacement.ApplyReplacements(message, "polite");
-
-        args.Message = message;
-    }
+        => (args.Message, args.TTSMessage) = _replacement.ApplyReplacements((args.Message, args.TTSMessage), "polite"); 
 };

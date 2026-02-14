@@ -20,7 +20,9 @@ namespace Content.Server.Speech.EntitySystems
         [Dependency] private readonly ILocalizationManager _loc = default!;
 
         private readonly Dictionary<ProtoId<ReplacementAccentPrototype>, (Regex regex, string replacement)[]>
-            _cachedReplacements = new();
+            _cachedReplacements = [];
+        private readonly Dictionary<ProtoId<ReplacementAccentPrototype>, (Regex regex, string replacement)[]>
+            _cachedTTSReplacements = [];
 
         public override void Initialize()
         {
@@ -36,93 +38,109 @@ namespace Content.Server.Speech.EntitySystems
             _proto.PrototypesReloaded -= OnPrototypesReloaded;
         }
 
+        // Starlight start
         private void OnAccent(EntityUid uid, ReplacementAccentComponent component, AccentGetEvent args)
         {
-            args.Message = ApplyReplacements(args.Message, component.Accent);
+            var (text, ttsText) = ApplyReplacements((args.Message, args.TTSMessage), component.Accent);
+            args.Message = text;
+            args.TTSMessage = ttsText;
         }
 
         /// <summary>
         ///     Attempts to apply a given replacement accent prototype to a message.
         /// </summary>
         [PublicAPI]
-        public string ApplyReplacements(string message, string accent)
+        public (string text, string ttsText) ApplyReplacements((string text, string ttsText) msg, string accent) 
         {
             if (!_proto.TryIndex<ReplacementAccentPrototype>(accent, out var prototype))
-                return message;
+                return msg; 
 
             if (!_random.Prob(prototype.ReplacementChance))
-                return message;
+                return msg; 
 
             // Prioritize fully replacing if that exists--
             // ideally both aren't used at the same time (but we don't have a way to enforce that in serialization yet)
             if (prototype.FullReplacements != null)
             {
-                return prototype.FullReplacements.Length != 0 ? Loc.GetString(_random.Pick(prototype.FullReplacements)) : "";
+                if (prototype.FullReplacements.Length == 0)
+                    return ("", "");
+                var replacementId = _random.Pick(prototype.FullReplacements);
+                var replacement = _loc.GetString(replacementId);
+                var ttsReplacement = _loc.TryGetString(replacementId + "-tts", out var ttsRep) ? ttsRep : replacement;
+                return (replacement, ttsReplacement);
             }
 
             // Prohibition of repeated word replacements.
             // All replaced words placed in the final message are placed here as dashes (___) with the same length.
             // The regex search goes through this buffer message, from which the already replaced words are crossed out,
             // ensuring that the replaced words cannot be replaced again.
-            var maskMessage = message;
+            var text = ApplyWordReplacements(msg.text, false);
+            var ttsText = ApplyWordReplacements(msg.ttsText, true);
 
-            foreach (var (regex, replace) in GetCachedReplacements(prototype))
+            return (text, ttsText);
+
+            string ApplyWordReplacements(string message, bool isTTS)
             {
-                // this is kind of slow but its not that bad
-                // essentially: go over all matches, try to match capitalization where possible, then replace
-                // rather than using regex.replace
-                for (int i = regex.Count(maskMessage); i > 0; i--)
+                var maskMessage = message;
+
+                foreach (var (regex, replace) in GetCachedReplacements(prototype, isTTS))
                 {
-                    // fetch the match again as the character indices may have changed
-                    Match match = regex.Match(maskMessage);
-                    var replacement = replace;
-
-                    // Intelligently replace capitalization
-                    // two cases where we will do so:
-                    // - the string is all upper case (just uppercase the replacement too)
-                    // - the first letter of the word is capitalized (common, just uppercase the first letter too)
-                    // any other cases are not really useful or not viable, since the match & replacement can be different
-                    // lengths
-
-                    // second expression here is weird--its specifically for single-word capitalization for I or A
-                    // dwarf expands I -> Ah, without that it would transform I -> AH
-                    // so that second case will only fully-uppercase if the replacement length is also 1
-                    if (!match.Value.Any(char.IsLower) && (match.Length > 1 || replacement.Length == 1))
+                    // this is kind of slow but its not that bad
+                    // essentially: go over all matches, try to match capitalization where possible, then replace
+                    // rather than using regex.replace
+                    for (int i = regex.Count(maskMessage); i > 0; i--)
                     {
-                        replacement = replacement.ToUpperInvariant();
-                    }
-                    else if (match.Length >= 1 && replacement.Length >= 1 && char.IsUpper(match.Value[0]))
-                    {
-                        replacement = replacement[0].ToString().ToUpper() + replacement[1..];
-                    }
+                        // fetch the match again as the character indices may have changed
+                        Match match = regex.Match(maskMessage);
+                        var replacement = replace;
 
-                    // In-place replace the match with the transformed capitalization replacement
-                    message = message.Remove(match.Index, match.Length).Insert(match.Index, replacement);
-                    var mask = new string('_', replacement.Length);
-                    maskMessage = maskMessage.Remove(match.Index, match.Length).Insert(match.Index, mask);
+                        // Intelligently replace capitalization
+                        // two cases where we will do so:
+                        // - the string is all upper case (just uppercase the replacement too)
+                        // - the first letter of the word is capitalized (common, just uppercase the first letter too)
+                        // any other cases are not really useful or not viable, since the match & replacement can be different
+                        // lengths
+
+                        // second expression here is weird--its specifically for single-word capitalization for I or A
+                        // dwarf expands I -> Ah, without that it would transform I -> AH
+                        // so that second case will only fully-uppercase if the replacement length is also 1
+                        if (!match.Value.Any(char.IsLower) && (match.Length > 1 || replacement.Length == 1))
+                        {
+                            replacement = replacement.ToUpperInvariant();
+                        }
+                        else if (match.Length >= 1 && replacement.Length >= 1 && char.IsUpper(match.Value[0]))
+                        {
+                            replacement = replacement[0].ToString().ToUpper() + replacement[1..];
+                        }
+
+                        // In-place replace the match with the transformed capitalization replacement
+                        message = message.Remove(match.Index, match.Length).Insert(match.Index, replacement);
+                        var mask = new string('_', replacement.Length);
+                        maskMessage = maskMessage.Remove(match.Index, match.Length).Insert(match.Index, mask);
+                    }
                 }
-            }
 
-            return message;
+                return message;
+            }
         }
 
-        private (Regex regex, string replacement)[] GetCachedReplacements(ReplacementAccentPrototype prototype)
+        private (Regex regex, string replacement)[] GetCachedReplacements(ReplacementAccentPrototype prototype, bool isTts)
         {
-            if (!_cachedReplacements.TryGetValue(prototype.ID, out var replacements))
+            var cache = isTts? _cachedTTSReplacements : _cachedReplacements;
+
+            if (!cache.TryGetValue(prototype.ID, out var replacements))
             {
-                replacements = GenerateCachedReplacements(prototype);
-                _cachedReplacements.Add(prototype.ID, replacements);
+                replacements = GenerateCachedReplacements(isTts ? prototype.TTSWordReplacements : prototype.WordReplacements);
+                cache.Add(prototype.ID, replacements);
             }
 
             return replacements;
         }
 
-        private (Regex regex, string replacement)[] GenerateCachedReplacements(ReplacementAccentPrototype prototype)
-        {
-            if (prototype.WordReplacements is not { } replacements)
-                return [];
-
-            return replacements.Select(kv =>
+        private (Regex regex, string replacement)[] GenerateCachedReplacements(Dictionary<string, string>? replacements) 
+            => replacements is null
+                ? []
+                : [.. replacements.Select(kv =>
                 {
                     var (first, replace) = kv;
                     var firstLoc = _loc.GetString(first);
@@ -132,9 +150,9 @@ namespace Content.Server.Speech.EntitySystems
 
                     return (regex, replaceLoc);
 
-                })
-                .ToArray();
-        }
+                })];
+
+        // Starlight end
 
         private void OnPrototypesReloaded(PrototypesReloadedEventArgs obj)
         {

@@ -13,9 +13,12 @@ public sealed class AccentGetEvent : EntityEventArgs
     /// </summary>
     public string Message { get; set; }
 
-    public AccentGetEvent(EntityUid entity, string message)
+    public string TTSMessage { get; set; } // Starlight
+
+    public AccentGetEvent(EntityUid entity, string message, string ttsMessage) // Starlight
     {
         Entity = entity;
         Message = message;
+        TTSMessage = ttsMessage; // Starlight
     }
 }

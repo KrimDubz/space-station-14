@@ -15,9 +15,10 @@ public sealed class AccentSystem : EntitySystem
 
     private void AccentHandler(TransformSpeechEvent args)
     {
-        var accentEvent = new AccentGetEvent(args.Sender, args.Message);
+        var accentEvent = new AccentGetEvent(args.Sender, args.Message, args.TTSMessage); // Starlight
 
         RaiseLocalEvent(args.Sender, accentEvent, true);
         args.Message = accentEvent.Message;
+        args.TTSMessage = accentEvent.TTSMessage; // Starlight
     }
 }

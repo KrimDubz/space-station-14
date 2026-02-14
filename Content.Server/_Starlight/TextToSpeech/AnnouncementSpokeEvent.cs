@@ -5,7 +5,9 @@ namespace Content.Server.Starlight.TTS;
 
 public sealed class AnnouncementSpokeEvent : EntityEventArgs
 {
-    public Filter Source { get; set; } = null!;
+    public Filter Receivers { get; set; } = null!;
+    public NetEntity? SourceUid { get; set; }
+    public NetEntity? SpeakerUid { get; set; }
     public string Message { get; set; } = null!;
     public string? AnnounceVoice { get; set; } = null!;
     public SoundSpecifier? AnnouncementSound { get; set; } = null!;

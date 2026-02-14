@@ -35,11 +35,13 @@ public sealed class TransformSpeechEvent : EntityEventArgs
 {
     public EntityUid Sender;
     public string Message;
+    public string TTSMessage; // Starlight
 
-    public TransformSpeechEvent(EntityUid sender, string message)
+    public TransformSpeechEvent(EntityUid sender, string message, string ttsMessage) // Starlight
     {
         Sender = sender;
         Message = message;
+        TTSMessage = ttsMessage; // Starlight
     }
 }
 
@@ -62,6 +64,7 @@ public sealed class EntitySpokeEvent : EntityEventArgs
 {
     public readonly EntityUid Source;
     public readonly string Message;
+    public readonly string TTSMessage; // Starlight
     public readonly string? ObfuscatedMessage; // not null if this was a whisper
     public readonly bool IsWhisper; // Starlight
     public readonly LanguagePrototype Language; // Starlight
@@ -72,12 +75,13 @@ public sealed class EntitySpokeEvent : EntityEventArgs
     /// </summary>
     public RadioChannelPrototype? Channel;
 
-    public EntitySpokeEvent(EntityUid source, string message, RadioChannelPrototype? channel, string? obfuscatedMessage, bool isWhisper, LanguagePrototype language) // Starlight - added isWhisper, language
+    public EntitySpokeEvent(EntityUid source, string message, string ttsMessage, RadioChannelPrototype? channel, string? obfuscatedMessage, bool isWhisper, LanguagePrototype language) // Starlight - added isWhisper, language, ttsMessage
     {
         Source = source;
         Message = message;
         Channel = channel;
         ObfuscatedMessage = obfuscatedMessage;
+        TTSMessage = ttsMessage; // Starlight
         IsWhisper = isWhisper; // Starlight
         Language = language; // Starlight
     }

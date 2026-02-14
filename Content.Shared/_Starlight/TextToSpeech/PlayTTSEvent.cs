@@ -11,7 +11,6 @@ public sealed class TTSHeaderEvent : EntityEventArgs
     public TTSType Type { get; set; }
     public SoundSpecifier? Chime { get; set; }
     public NetEntity? SourceUid { get; set; }
-    public bool IsWav { get; set; }
     public float VolumeModifier { get; set; } = 1;
 }
 
@@ -26,6 +25,7 @@ public enum TTSType
 {
     System,
     IG,
+    Mind,
     Radio,
     Announcement,
 }

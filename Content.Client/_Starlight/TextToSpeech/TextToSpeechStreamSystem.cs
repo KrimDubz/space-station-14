@@ -31,7 +31,6 @@ public sealed class TextToSpeechStreamSystem : EntitySystem
             SourceUid = ev.SourceUid,
             Chime = ev.Chime,
             Type = ev.Type,
-            IsWav = ev.IsWav,
             VolumeModifier = ev.VolumeModifier,
         };
 

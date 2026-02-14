@@ -105,7 +105,7 @@ public sealed class TextToSpeechSystem : EntitySystem
         {
             TTSType.Announcement => _announceVolume,
             TTSType.Radio => _radioVolume,
-            _ => _volume    
+            _ => _volume
         };
 
         if (ev.Type == TTSType.Announcement || (ev.Type == TTSType.Radio && _ttsQueueEnabled))
@@ -129,25 +129,25 @@ public sealed class TextToSpeechSystem : EntitySystem
         Queue<byte[]> data,
         EntityUid? sourceUid = null,
         AudioParams? audioParams = null,
-        float prependSilence = 0f,
-        IStopwatch? stopwatch = null)
+        (AudioComponent audio, TTSAudioStreamComponent tts)? previous = null)
     {
         try
         {
-            if(!data.TryDequeue(out var audioBytes))
-            {
-                _sawmill.Debug("queue is empty");
+            if (!data.TryDequeue(out var audioBytes))
                 return null;
-            }
 
             if (audioBytes.Length < 10 || (sourceUid != null && sourceUid.Value.Id == 0))
                 return null;
 
-            _sawmill.Debug($"Play TTS chunk: {audioBytes.Length}, prependSilence: {prependSilence:F3}s");
-
+            var silencePadding = 1f;
             var @params = audioParams ?? AudioParams.Default;
             var audioStream = _audioManager.LoadAudioOggVorbis(new MemoryStream(audioBytes));
 
+            if (previous is var (audio, tts))
+                silencePadding = Math.Clamp(1f - (float)(tts.AudioLength.TotalSeconds - audio.PlaybackPosition), 0f, 1f);
+            
+            _sawmill.Debug($"Play TTS chunk: {audioBytes.Length}, prependSilence: {silencePadding:F3}s");
+            @params = @params.WithPlayOffset(silencePadding);
             var ent = sourceUid != null
                 ? _audio.PlayEntity(audioStream, sourceUid.Value, null, @params)
                 : _audio.PlayGlobal(audioStream, null, @params);
@@ -158,9 +158,7 @@ public sealed class TextToSpeechSystem : EntitySystem
                 comp.Data = data;
                 comp.SourceUid = sourceUid;
                 comp.AudioParams = audioParams;
-                var silencePadding = Math.Clamp(0.1f - (prependSilence + (float)(stopwatch?.Elapsed.TotalSeconds ?? 0)), 0f, 0.1f);
-                ent.Value.Component.PlaybackPosition = silencePadding;
-                _sawmill.Debug($"silencePadding: {silencePadding:F3}s");
+                comp.AudioLength = audioStream.Length;
             }
 
             return ent;
@@ -177,26 +175,24 @@ public sealed class TextToSpeechSystem : EntitySystem
     {
         base.Update(frameTime);
 
-        var toPlay = new List<(Queue<byte[]> Data, EntityUid? SourceUid, AudioParams? Params, float Silence)>();
-        var query = EntityQueryEnumerator<TTSAudioStreamComponent, TimedDespawnComponent>();
-        var stopwatch = new Stopwatch();
-        stopwatch.Start();
+        var toPlay = new List<(AudioComponent audio, TTSAudioStreamComponent tts)>();
+        var query = EntityQueryEnumerator<TTSAudioStreamComponent, TimedDespawnComponent, AudioComponent>();
 
-        while (query.MoveNext(out var uid, out var ttsComp, out var despawnComponent))
+        while (query.MoveNext(out var uid, out var ttsComp, out var despawnComponent, out var audio))
         {
             if (ttsComp.Handled)
                 continue;
-            var timeRemaining = despawnComponent.Lifetime - SharedAudioSystem.AudioDespawnBuffer - 0.2f;
+            var timeRemaining = despawnComponent.Lifetime - SharedAudioSystem.AudioDespawnBuffer - 1f;
 
             if (timeRemaining < 0.066f)
-            {
-                ttsComp.Handled = true;
-                toPlay.Add((ttsComp.Data, ttsComp.SourceUid, ttsComp.AudioParams, timeRemaining));
-            }
+                toPlay.Add((audio, ttsComp));
         }
 
-        foreach (var (data, sourceUid, audioParams, silence) in toPlay)
-            PlayTTSBytes(data, sourceUid, audioParams, silence, stopwatch);
+        foreach (var (audio, tts) in toPlay)
+        {
+            if (PlayTTSBytes(tts.Data, tts.SourceUid, tts.AudioParams, (audio, tts)) is not null)
+                tts.Handled = true;
+        }
 
         if (_currentPlaying.HasValue)
         {
