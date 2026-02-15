@@ -11,6 +11,7 @@ using Robust.Shared.Audio.Components;
 using Robust.Shared.Audio.Systems;
 using Robust.Shared.Configuration;
 using Robust.Shared.ContentPack;
+using Robust.Shared.Player;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Random;
 using Robust.Shared.Spawners;
@@ -25,11 +26,10 @@ namespace Content.Client._Starlight.TTS;
 public sealed class TextToSpeechSystem : EntitySystem
 {
     [Dependency] private readonly IConfigurationManager _cfg = default!;
+    [Dependency] private readonly ISharedPlayerManager _player = default!;
     [Dependency] private readonly AudioSystem _audio = default!;
     [Dependency] private readonly SharedAudioSystem _sharedAudio = default!;
-    [Dependency] private readonly IRobustRandom _random = default!;
     [Dependency] private readonly IAudioManager _audioManager = default!;
-    [Dependency] private readonly IPrototypeManager _proto = default!;
     [Dependency] private readonly RadioChimeSystem _chime = default!;
 
     private readonly ConcurrentQueue<(Queue<byte[]> data, SoundSpecifier? specifier, float volume)> _ttsQueue = [];
@@ -51,7 +51,6 @@ public sealed class TextToSpeechSystem : EntitySystem
         _cfg.OnValueChanged(StarlightCCVars.TTSRadioQueueEnabled, OnTtsRadioQueueChanged, true);
         _cfg.OnValueChanged(StarlightCCVars.TTSClientEnabled, OnTtsClientOptionChanged, true);
         SubscribeLocalEvent<TTSStream>(OnTTSStream);
-        //SubscribeNetworkEvent<AnnounceTtsEvent>(OnAnnounceTTSPlay);
     }
 
     public override void Shutdown()
@@ -83,9 +82,6 @@ public sealed class TextToSpeechSystem : EntitySystem
     private void OnTtsClientOptionChanged(bool option)
         => RaiseNetworkEvent(new ClientOptionTTSEvent { Enabled = option });
 
-    //private void OnAnnounceTTSPlay(AnnounceTtsEvent ev)
-    //    => _ttsQueue.Enqueue((ev.Data, ev.AnnouncementSound, _announceVolume));
-
     private void PlayQueue()
     {
         if (!_ttsQueue.TryDequeue(out var entry))
@@ -93,6 +89,39 @@ public sealed class TextToSpeechSystem : EntitySystem
 
         var volume = SharedAudioSystem.GainToVolume(entry.volume);
         var finalParams = AudioParams.Default.WithVolume(volume);
+
+        // adaptive pitch scaling
+        switch (_ttsQueue.Count)
+        {
+            case int x when x < 2:
+                break;
+            case 2:
+                finalParams = finalParams.WithPitchScale(1.01f);
+                break;
+            case 3:
+                finalParams = finalParams.WithPitchScale(1.03f);
+                break;
+            case 4:
+                finalParams = finalParams.WithPitchScale(1.09f);
+                break;
+            case 5:
+                finalParams = finalParams.WithPitchScale(1.12f);
+                break;
+            case 6:
+                finalParams = finalParams.WithPitchScale(1.21f);
+                break;
+            case 7:
+                finalParams = finalParams.WithPitchScale(1.33f);
+                break;
+            case 8:
+                finalParams = finalParams.WithPitchScale(1.54f);
+                break;
+            case 9:
+                finalParams = finalParams.WithPitchScale(1.87f);
+                break;
+            default:
+                return;
+        }
 
         if (entry.specifier != null)
             _currentPlaying = _audio.PlayGlobal(_sharedAudio.ResolveSound(entry.specifier), EntityUid.Invalid, finalParams.AddVolume(-5f));
@@ -104,7 +133,10 @@ public sealed class TextToSpeechSystem : EntitySystem
         var volume = ev.Type switch
         {
             TTSType.Announcement => _announceVolume,
+            TTSType.System => _announceVolume,
             TTSType.Radio => _radioVolume,
+            TTSType.Mind => _radioVolume,
+            TTSType.IG => _volume,
             _ => _volume
         };
 
@@ -148,7 +180,7 @@ public sealed class TextToSpeechSystem : EntitySystem
             
             _sawmill.Debug($"Play TTS chunk: {audioBytes.Length}, prependSilence: {silencePadding:F3}s");
             @params = @params.WithPlayOffset(silencePadding);
-            var ent = sourceUid != null
+            var ent = sourceUid != null && sourceUid != _player.LocalEntity
                 ? _audio.PlayEntity(audioStream, sourceUid.Value, null, @params)
                 : _audio.PlayGlobal(audioStream, null, @params);
 

@@ -211,14 +211,17 @@ public sealed class RadioSystem : EntitySystem
 
         }
 
+        // Starlight start
         RaiseLocalEvent(new RadioSpokeEvent
         {
+            Channel = channel,
             Source = messageSource,
             Message = message,
-            Language = language, // Starlight-edit: Languages
-            SuppressTTS = suppressTTS, // Starlight
+            Language = language,
+            SuppressTTS = suppressTTS, 
             Receivers = [.. ev.Receivers]
         });
+        // Starlight end
 
         if (name != Name(messageSource))
             _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Radio message from {ToPrettyString(messageSource):user} as {name} on {channel.LocalizedName}: {message}");

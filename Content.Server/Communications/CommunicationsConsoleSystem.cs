@@ -276,7 +276,7 @@ namespace Content.Server.Communications
             var msg = SharedChatSystem.SanitizeAnnouncement(message.Message, maxLength);
             //#region Starlight
             msg = _chatSystem.SanitizeMessageReplaceWords(msg);
-            var accentEv = new AccentGetEvent(uid, msg);
+            var accentEv = new AccentGetEvent(uid, msg, msg);
             RaiseLocalEvent(uid,accentEv);
             msg = accentEv.Message;
 

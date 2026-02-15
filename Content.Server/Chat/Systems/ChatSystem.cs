@@ -591,10 +591,10 @@ public sealed partial class ChatSystem : SharedChatSystem
 
         var message = TransformSpeech(source, originalMessage, language); // Starlight-edit: Languages, tts v5.0
 
-        if (message.message.Length == 0) // Starlight
+        if (message.text.Length == 0) // Starlight
             return;
 
-        var speech = GetSpeechVerb(source, message.message); // Starlight
+        var speech = GetSpeechVerb(source, message.text); // Starlight
 
         // get the entity's apparent name (if no override provided).
         string name;
@@ -615,18 +615,18 @@ public sealed partial class ChatSystem : SharedChatSystem
         name = FormattedMessage.EscapeText(name);
 
         // Starlight - Start
-        var wrappedMessage = WrapPublicMessage(source, name, message, language: language);
+        var wrappedMessage = WrapPublicMessage(source, name, message.text, language: language); // Starlight
         // The chat message obfuscated via language obfuscation.
-        var obfuscated = SanitizeInGameICMessage(source, _language.ObfuscateSpeech(message, language), out var emoteStr, true, _configurationManager.GetCVar(CCVars.ChatPunctuation),
+        var obfuscated = SanitizeInGameICMessage(source, _language.ObfuscateSpeech(message.text, language), out var emoteStr, true, _configurationManager.GetCVar(CCVars.ChatPunctuation), // Starlight
         (!CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Parent.Name == "en")
         || (CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Name == "en"));
         // The language-obfuscated message wrapped in a "x says y" string.
         var wrappedObfuscated = WrapPublicMessage(source, name, obfuscated, language: language, obfuscated: true);
         // Starlight End
 
-        SendInVoiceRange(ChatChannel.Local, name, message, wrappedMessage, obfuscated, wrappedObfuscated, source, range, languageOverride: language); // Starlight-edit: Languages
+        SendInVoiceRange(ChatChannel.Local, name, message.text, wrappedMessage, obfuscated, wrappedObfuscated, source, range, languageOverride: language); // Starlight-edit: Languages
 
-        var ev = new EntitySpokeEvent(source, message, null, null, false, language); // Starlight-edit: Languages
+        var ev = new EntitySpokeEvent(source, message.text, message.ttsText, null, null, false, language); // Starlight-edit: Languages
         RaiseLocalEvent(source, ev, true);
 
         // To avoid logging any messages sent by entities that are not players, like vendors, cloning, etc.
@@ -634,7 +634,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         if (!HasComp<ActorComponent>(source) || hideLog)
             return;
 
-        if (originalMessage == message)
+        if (originalMessage == message.text) // Starlight
         {
             if (name != Name(source))
                 _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Say from {source} as {name}: {originalMessage}.");
@@ -667,7 +667,7 @@ public sealed partial class ChatSystem : SharedChatSystem
             return;
 
         var message = TransformSpeech(source, FormattedMessage.RemoveMarkupOrThrow(originalMessage), language); // Starlight
-        if (message.Length == 0)
+        if (message.text.Length == 0) // Starlight
             return;
 
         // get the entity's name by visual identity (if no override provided).
@@ -686,7 +686,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         }
         name = FormattedMessage.EscapeText(name);
 
-        var languageObfuscatedMessage = SanitizeInGameICMessage(source, _language.ObfuscateSpeech(message, language), out var emoteStr, true, _configurationManager.GetCVar(CCVars.ChatPunctuation),
+        var languageObfuscatedMessage = SanitizeInGameICMessage(source, _language.ObfuscateSpeech(message.text , language), out var emoteStr, true, _configurationManager.GetCVar(CCVars.ChatPunctuation),
         (!CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Parent.Name == "en")
         || (CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Name == "en")); // Starlight
 
@@ -702,7 +702,7 @@ public sealed partial class ChatSystem : SharedChatSystem
             // Starlight - Start
             var canUnderstandLanguage = _language.CanUnderstand(listener, language.ID);
             // How the entity perceives the message depends on whether it can understand its language
-            var perceivedMessage = canUnderstandLanguage ? message : languageObfuscatedMessage;
+            var perceivedMessage = canUnderstandLanguage ? message.text : languageObfuscatedMessage; // Starlight
             var obfuscated = canUnderstandLanguage != true;
 
             // Result is the intermediate message derived from the perceived one via obfuscation
@@ -731,13 +731,13 @@ public sealed partial class ChatSystem : SharedChatSystem
             // Starlight - End
         }
 
-        var replayWrap = WrapWhisperMessage(source, "chat-manager-entity-whisper-wrap-message", name, message, language); // Starlight-edit: Languages
-        _replay.RecordServerMessage(new ChatMessage(ChatChannel.Whisper, message, replayWrap, GetNetEntity(source), null, MessageRangeHideChatForReplay(range))); // Starlight-edit: Languages
+        var replayWrap = WrapWhisperMessage(source, "chat-manager-entity-whisper-wrap-message", name, message.text, language); // Starlight-edit: Languages
+        _replay.RecordServerMessage(new ChatMessage(ChatChannel.Whisper, message.text, replayWrap, GetNetEntity(source), null, MessageRangeHideChatForReplay(range))); // Starlight-edit: Languages
 
-        var ev = new EntitySpokeEvent(source, message, channel, languageObfuscatedMessage, true, language); // Starlight-edit: Languages
+        var ev = new EntitySpokeEvent(source, message.text, message.ttsText, channel, languageObfuscatedMessage, true, language); // Starlight-edit: Languages
         RaiseLocalEvent(source, ev, true);
         if (!hideLog)
-            if (originalMessage == message)
+            if (originalMessage == message.text) // Starlight
             {
                 if (name != Name(source))
                     _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Whisper from {source} as {name}: {originalMessage}.");
@@ -1045,7 +1045,7 @@ public sealed partial class ChatSystem : SharedChatSystem
 
         var msg = message;
 
-        msg = _wordreplacement.ApplyReplacements(msg, ChatSanitize_Accent);
+        msg = _wordreplacement.ApplyReplacements((msg, msg), ChatSanitize_Accent).text; //Starlight
 
         return msg;
     }

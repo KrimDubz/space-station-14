@@ -1,5 +1,7 @@
 using Content.Shared.GameTicking;
+using Content.Shared.Radio;
 using Content.Shared.Starlight.TextToSpeech;
+using Robust.Shared.Prototypes;
 
 namespace Content.Client._Starlight.TextToSpeech;
 
@@ -7,6 +9,7 @@ public sealed class TextToSpeechStreamSystem : EntitySystem
 {
     private ISawmill _sawmill = default!;
     private readonly Dictionary<Guid, TTSStream> _streams = [];
+    private HashSet<ProtoId<RadioChannelPrototype>> _ignore = [];
 
     public override void Initialize()
     {
@@ -25,6 +28,9 @@ public sealed class TextToSpeechStreamSystem : EntitySystem
             return;
         }
 
+        if(ev.Channel != null && _ignore.Contains(ev.Channel.Value))
+            return;
+
         var stream = new TTSStream
         {
             Id = ev.Id,
@@ -41,10 +47,7 @@ public sealed class TextToSpeechStreamSystem : EntitySystem
     private void OnChunk(TTSChunkEvent ev)
     {
         if (!_streams.TryGetValue(ev.Id, out var stream))
-        {
-            _sawmill.Warning("TTS chunk received for unknown stream {Id}", ev.Id);
             return;
-        }
 
         if (ev.Data.Length == 0)
         {
