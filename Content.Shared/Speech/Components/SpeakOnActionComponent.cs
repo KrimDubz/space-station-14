@@ -1,3 +1,4 @@
+using Content.Shared._Starlight.Speech;
 using Content.Shared.Speech.EntitySystems;
 using Robust.Shared.GameStates;
 
@@ -14,4 +15,12 @@ public sealed partial class SpeakOnActionComponent : Component
     /// </summary>
     [DataField, AutoNetworkedField]
     public LocId? Sentence;
+
+    // starlight start
+    [DataField, AutoNetworkedField]
+    public LocId? Tts;
+
+    [DataField, AutoNetworkedField]
+    public TTSModifier Modifier = TTSModifier.None;
+    // starlight end
 }

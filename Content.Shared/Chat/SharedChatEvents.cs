@@ -5,6 +5,8 @@ using Robust.Shared.Prototypes;
 
 #region Starlight
 using Content.Shared._Starlight.Language;
+using Content.Shared._Starlight.Speech;
+using static Content.Shared.Administration.Notes.AdminMessageEuiState;
 #endregion Starlight
 
 namespace Content.Shared.Chat;
@@ -34,14 +36,12 @@ public sealed class TransformSpeakerNameEvent : EntityEventArgs, IInventoryRelay
 public sealed class TransformSpeechEvent : EntityEventArgs
 {
     public EntityUid Sender;
-    public string Message;
-    public string TTSMessage; // Starlight
+    public _Starlight.Speech.SpeechMessage Message; // Starlight
 
-    public TransformSpeechEvent(EntityUid sender, string message, string ttsMessage) // Starlight
+    public TransformSpeechEvent(EntityUid sender, _Starlight.Speech.SpeechMessage message) // Starlight
     {
         Sender = sender;
-        Message = message;
-        TTSMessage = ttsMessage; // Starlight
+        Message = message; // Starlight
     }
 }
 
@@ -63,25 +63,23 @@ public sealed class CheckIgnoreSpeechBlockerEvent : EntityEventArgs
 public sealed class EntitySpokeEvent : EntityEventArgs
 {
     public readonly EntityUid Source;
-    public readonly string Message;
-    public readonly string TTSMessage; // Starlight
+    public readonly SpeechMessage Message; // Starlight
     public readonly string? ObfuscatedMessage; // not null if this was a whisper
     public readonly bool IsWhisper; // Starlight
     public readonly LanguagePrototype Language; // Starlight
-
+    
     /// <summary>
     /// If the entity was trying to speak into a radio, this was the channel they were trying to access. If a radio
     /// message gets sent on this channel, this should be set to null to prevent duplicate messages.
     /// </summary>
     public RadioChannelPrototype? Channel;
 
-    public EntitySpokeEvent(EntityUid source, string message, string ttsMessage, RadioChannelPrototype? channel, string? obfuscatedMessage, bool isWhisper, LanguagePrototype language) // Starlight - added isWhisper, language, ttsMessage
+    public EntitySpokeEvent(EntityUid source, SpeechMessage message, RadioChannelPrototype? channel, string? obfuscatedMessage, bool isWhisper, LanguagePrototype language) // Starlight - added isWhisper, language, ttsMessage
     {
         Source = source;
         Message = message;
         Channel = channel;
         ObfuscatedMessage = obfuscatedMessage;
-        TTSMessage = ttsMessage; // Starlight
         IsWhisper = isWhisper; // Starlight
         Language = language; // Starlight
     }

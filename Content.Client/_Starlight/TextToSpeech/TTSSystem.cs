@@ -42,6 +42,19 @@ public sealed class TextToSpeechSystem : EntitySystem
     private float _announceVolume;
     private bool _ttsQueueEnabled;
 
+    public void ClearQueue()
+    {
+        _ttsQueue.Clear();
+
+        if (_currentPlaying.HasValue)
+        {
+            var (entity, _) = _currentPlaying.Value;
+            if (!Deleted(entity))
+                QueueDel(entity);
+            _currentPlaying = null;
+        }
+    }
+
     public override void Initialize()
     {
         _sawmill = Logger.GetSawmill("tts");
@@ -125,7 +138,7 @@ public sealed class TextToSpeechSystem : EntitySystem
 
         if (entry.specifier != null)
             _currentPlaying = _audio.PlayGlobal(_sharedAudio.ResolveSound(entry.specifier), EntityUid.Invalid, finalParams.AddVolume(-5f));
-        _currentPlaying = PlayTTSBytes(entry.data, null, finalParams);
+        _currentPlaying = PlayTTS(entry.data, null, finalParams);
     }
 
     private void OnTTSStream(TTSStream ev)
@@ -151,17 +164,30 @@ public sealed class TextToSpeechSystem : EntitySystem
             var entity = GetEntity(ev.SourceUid);
 
             if (!_chime.IsMuted && ev.Chime is SoundSpecifier chime)
-                _currentPlaying = _audio.PlayGlobal(_sharedAudio.ResolveSound(chime), EntityUid.Invalid, audioParams.AddVolume(-3f));
-
-            PlayTTSBytes(ev.Data, entity, audioParams);
+            {
+                var audio = _sharedAudio.ResolveSound(chime);
+                var ent = _audio.PlayGlobal(audio, EntityUid.Invalid, audioParams.AddVolume(-3f));
+                if (ent != null)
+                {
+                    var comp = EnsureComp<TTSAudioStreamComponent>(ent.Value.Entity);
+                    comp.Data = ev.Data;
+                    comp.EntityUid = ent.Value.Entity;
+                    comp.SourceUid = entity;
+                    comp.AudioParams = audioParams;
+                    comp.AudioLength = _audio.GetAudioLength(audio);
+                    _currentPlaying = ent;
+                    return;
+                }
+            }
+            _currentPlaying = PlayTTS(ev.Data, entity, audioParams);
         }
     }
 
-    private (EntityUid Entity, AudioComponent Component)? PlayTTSBytes(
+    private (EntityUid Entity, AudioComponent Component)? PlayTTS(
         Queue<byte[]> data,
         EntityUid? sourceUid = null,
         AudioParams? audioParams = null,
-        (AudioComponent audio, TTSAudioStreamComponent tts)? previous = null)
+        (EntityUid eid, AudioComponent audio, TTSAudioStreamComponent tts)? previous = null)
     {
         try
         {
@@ -175,9 +201,9 @@ public sealed class TextToSpeechSystem : EntitySystem
             var @params = audioParams ?? AudioParams.Default;
             var audioStream = _audioManager.LoadAudioOggVorbis(new MemoryStream(audioBytes));
 
-            if (previous is var (audio, tts))
+            if (previous is var (eid, audio, tts))
                 silencePadding = Math.Clamp(1f - (float)(tts.AudioLength.TotalSeconds - audio.PlaybackPosition), 0f, 1f);
-            
+
             _sawmill.Debug($"Play TTS chunk: {audioBytes.Length}, prependSilence: {silencePadding:F3}s");
             @params = @params.WithPlayOffset(silencePadding);
             var ent = sourceUid != null && sourceUid != _player.LocalEntity
@@ -188,9 +214,13 @@ public sealed class TextToSpeechSystem : EntitySystem
             {
                 var comp = EnsureComp<TTSAudioStreamComponent>(ent.Value.Entity);
                 comp.Data = data;
+                comp.EntityUid = ent.Value.Entity;
                 comp.SourceUid = sourceUid;
                 comp.AudioParams = audioParams;
                 comp.AudioLength = audioStream.Length;
+
+                if(_currentPlaying.HasValue && previous.HasValue && previous.Value.eid == ent.Value.Entity)
+                   _currentPlaying = ent;
             }
 
             return ent;
@@ -207,7 +237,7 @@ public sealed class TextToSpeechSystem : EntitySystem
     {
         base.Update(frameTime);
 
-        var toPlay = new List<(AudioComponent audio, TTSAudioStreamComponent tts)>();
+        var toPlay = new List<(EntityUid eid, AudioComponent audio, TTSAudioStreamComponent tts)>();
         var query = EntityQueryEnumerator<TTSAudioStreamComponent, TimedDespawnComponent, AudioComponent>();
 
         while (query.MoveNext(out var uid, out var ttsComp, out var despawnComponent, out var audio))
@@ -217,12 +247,12 @@ public sealed class TextToSpeechSystem : EntitySystem
             var timeRemaining = despawnComponent.Lifetime - SharedAudioSystem.AudioDespawnBuffer - 1f;
 
             if (timeRemaining < 0.066f)
-                toPlay.Add((audio, ttsComp));
+                toPlay.Add((uid, audio, ttsComp));
         }
 
-        foreach (var (audio, tts) in toPlay)
+        foreach (var (eid, audio, tts) in toPlay)
         {
-            if (PlayTTSBytes(tts.Data, tts.SourceUid, tts.AudioParams, (audio, tts)) is not null)
+            if (PlayTTS(tts.Data, tts.SourceUid, tts.AudioParams, (eid, audio, tts)) is not null)
                 tts.Handled = true;
         }
 

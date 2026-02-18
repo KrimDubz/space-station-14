@@ -9,7 +9,7 @@ public sealed class TextToSpeechStreamSystem : EntitySystem
 {
     private ISawmill _sawmill = default!;
     private readonly Dictionary<Guid, TTSStream> _streams = [];
-    private HashSet<ProtoId<RadioChannelPrototype>> _ignore = [];
+    private readonly HashSet<ProtoId<RadioChannelPrototype>> _mutedChannels = [];
 
     public override void Initialize()
     {
@@ -20,6 +20,14 @@ public sealed class TextToSpeechStreamSystem : EntitySystem
         SubscribeNetworkEvent<RoundRestartCleanupEvent>(OnReset);
     }
 
+    public void SetChannelMuted(ProtoId<RadioChannelPrototype> channel, bool muted)
+    {
+        if (muted)
+            _mutedChannels.Add(channel);
+        else
+            _mutedChannels.Remove(channel);
+    }
+
     private void OnHeader(TTSHeaderEvent ev)
     {
         if (_streams.ContainsKey(ev.Id))
@@ -28,7 +36,7 @@ public sealed class TextToSpeechStreamSystem : EntitySystem
             return;
         }
 
-        if(ev.Channel != null && _ignore.Contains(ev.Channel.Value))
+        if (ev.Channel != null && _mutedChannels.Contains(ev.Channel.Value))
             return;
 
         var stream = new TTSStream

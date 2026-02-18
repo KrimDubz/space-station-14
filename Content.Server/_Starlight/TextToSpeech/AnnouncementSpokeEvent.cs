@@ -9,6 +9,5 @@ public sealed class AnnouncementSpokeEvent : EntityEventArgs
     public NetEntity? SourceUid { get; set; }
     public NetEntity? SpeakerUid { get; set; }
     public string Message { get; set; } = null!;
-    public string? AnnounceVoice { get; set; } = null!;
     public SoundSpecifier? AnnouncementSound { get; set; } = null!;
 }

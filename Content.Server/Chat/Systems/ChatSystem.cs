@@ -2,14 +2,17 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using Content.Server._Starlight.Language;
 using Content.Server.Administration.Logs;
 using Content.Server.Administration.Managers;
 using Content.Server.Chat.Managers;
 using Content.Server.GameTicking;
 using Content.Server.Speech.EntitySystems;
-using Content.Server.Starlight.TTS;
 using Content.Server.Speech.Prototypes;
+using Content.Server.Starlight.TTS;
 using Content.Server.Station.Systems;
+using Content.Shared._Starlight.Language;
+using Content.Shared._Starlight.Speech;
 using Content.Shared.ActionBlocker;
 using Content.Shared.Administration;
 using Content.Shared.CCVar;
@@ -22,9 +25,13 @@ using Content.Shared.IdentityManagement;
 using Content.Shared.Mobs.Systems;
 using Content.Shared.Players;
 using Content.Shared.Players.RateLimiting;
+using Content.Shared.Popups;
 using Content.Shared.Radio;
+// Starlight Start
+using Content.Shared.Speech;
 using Content.Shared.Station.Components;
 using Content.Shared.Whitelist;
+using Npgsql.Replication.PgOutput.Messages;
 using Robust.Server.Player;
 using Robust.Shared.Audio;
 using Robust.Shared.Audio.Systems;
@@ -36,11 +43,6 @@ using Robust.Shared.Prototypes;
 using Robust.Shared.Random;
 using Robust.Shared.Replays;
 using Robust.Shared.Utility;
-// Starlight Start
-using Content.Shared.Speech;
-using Content.Server._Starlight.Language;
-using Content.Shared._Starlight.Language;
-using Content.Shared.Popups;
 // Starlight End
 
 namespace Content.Server.Chat.Systems;
@@ -154,7 +156,7 @@ public sealed partial class ChatSystem : SharedChatSystem
     /// <inheritdoc />
     public override void TrySendInGameICMessage(
         EntityUid source,
-        string message,
+        SpeechMessage message, // Starlight
         InGameICChatType desiredType,
         ChatTransmitRange range,
         bool hideLog = false,
@@ -169,7 +171,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         if (HasComp<GhostComponent>(source))
         {
             // Ghosts can only send dead chat messages, so we'll forward it to InGame OOC.
-            TrySendInGameOOCMessage(source, message, InGameOOCChatType.Dead, range == ChatTransmitRange.HideChat, shell, player);
+            TrySendInGameOOCMessage(source, message.Text, InGameOOCChatType.Dead, range == ChatTransmitRange.HideChat, shell, player);
             return;
         }
 
@@ -186,7 +188,7 @@ public sealed partial class ChatSystem : SharedChatSystem
             return;
         }
 
-        if (!CanSendInGame(message, shell, player))
+        if (!CanSendInGame(message.Text, shell, player))
             return;
 
         ignoreActionBlocker = CheckIgnoreSpeechBlocker(source, ignoreActionBlocker);
@@ -204,11 +206,11 @@ public sealed partial class ChatSystem : SharedChatSystem
             _chatManager.EnsurePlayer(player.UserId).AddEntity(GetNetEntity(source));
         }
 
-        if (desiredType == InGameICChatType.Speak && message.StartsWith(LocalPrefix))
+        if (desiredType == InGameICChatType.Speak && message.Text.StartsWith(LocalPrefix)) //Starlight
         {
             // prevent radios and remove prefix.
             checkRadioPrefix = false;
-            message = message[1..];
+            message.Text = message.Text[1..]; //Starlight
         }
 
         var language = languageOverride ?? _language.GetLanguage(source); // Starlight
@@ -219,16 +221,16 @@ public sealed partial class ChatSystem : SharedChatSystem
         bool shouldCapitalizeTheWordI = (!CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Parent.Name == "en")
             || (CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Name == "en");
 
-        message = SanitizeInGameICMessage(source, message, out var emoteStr, shouldCapitalize, shouldPunctuate, shouldCapitalizeTheWordI);
+        message = SanitizeInGameICMessage(source, message.Text, out var emoteStr, shouldCapitalize, shouldPunctuate, shouldCapitalizeTheWordI); //Starlight
 
         // Was there an emote in the message? If so, send it.
-        if (player != null && emoteStr != message && emoteStr != null)
+        if (player != null && emoteStr != message.Text && emoteStr != null) // Starlight
         {
             SendEntityEmote(source, emoteStr, range, nameOverride, language, ignoreActionBlocker); // Starlight
         }
 
         // This can happen if the entire string is sanitized out.
-        if (string.IsNullOrEmpty(message))
+        if (string.IsNullOrEmpty(message.Text)) //Starlight
             return;
 
         // Starlight
@@ -238,7 +240,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         // This message may have a radio prefix, and should then be whispered to the resolved radio channel
         if (checkRadioPrefix)
         {
-            if (TryProcessRadioMessage(source, message, out var modMessage, out var channel))
+            if (TryProcessRadioMessage(source, message.Text, out var modMessage, out var channel)) // Starlight
             {
                 SendEntityWhisper(source, modMessage, range, channel, nameOverride, language, hideLog, ignoreActionBlocker); // Starlight
                 return;
@@ -247,7 +249,7 @@ public sealed partial class ChatSystem : SharedChatSystem
 
         if (desiredType == InGameICChatType.CollectiveMind)
         {
-            if (TryProccessCollectiveMindMessage(source, message, out var modMessage, out var channel))
+            if (TryProccessCollectiveMindMessage(source, message.Text, out var modMessage, out var channel)) // Starlight
             {
                 SendCollectiveMindChat(source, modMessage, channel);
                 return;
@@ -264,7 +266,7 @@ public sealed partial class ChatSystem : SharedChatSystem
                 SendEntityWhisper(source, message, range, null, nameOverride, language, hideLog, ignoreActionBlocker); // Starlight
                 break;
             case InGameICChatType.Emote:
-                SendEntityEmote(source, message, range, nameOverride, language, hideLog: hideLog, ignoreActionBlocker: ignoreActionBlocker); // Starlight
+                SendEntityEmote(source, message.Text, range, nameOverride, language, hideLog: hideLog, ignoreActionBlocker: ignoreActionBlocker); // Starlight
                 break;
         }
     }
@@ -335,7 +337,8 @@ public sealed partial class ChatSystem : SharedChatSystem
         string? sender = null,
         bool playSound = true,
         SoundSpecifier? announcementSound = null,
-        Color? colorOverride = null
+        Color? colorOverride = null,
+        EntityUid? speaker = null // Starlight
         )
     {
         sender ??= Loc.GetString("chat-manager-sender-announcement");
@@ -350,6 +353,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         {
             Message = message,
             Receivers = Filter.Broadcast(),
+            SpeakerUid = speaker.HasValue ? GetNetEntity(speaker.Value) : null,
             AnnouncementSound = announcementSound,
         });
         _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Global station announcement from {sender}: {message}");
@@ -578,7 +582,7 @@ public sealed partial class ChatSystem : SharedChatSystem
 
     private void SendEntitySpeak(
         EntityUid source,
-        string originalMessage,
+        SpeechMessage message, // Starlight
         ChatTransmitRange range,
         string? nameOverride,
         LanguagePrototype language, // Starlight
@@ -589,12 +593,12 @@ public sealed partial class ChatSystem : SharedChatSystem
         if (!_actionBlocker.CanSpeak(source) && !ignoreActionBlocker)
             return;
 
-        var message = TransformSpeech(source, originalMessage, language); // Starlight-edit: Languages, tts v5.0
+        message = TransformSpeech(source, message, language); // Starlight-edit: Languages, tts v5.0
 
-        if (message.text.Length == 0) // Starlight
+        if (message.Text.Length == 0) // Starlight
             return;
-
-        var speech = GetSpeechVerb(source, message.text); // Starlight
+        var original = message.Text; // Starlight
+        var speech = GetSpeechVerb(source, message.Text); // Starlight
 
         // get the entity's apparent name (if no override provided).
         string name;
@@ -615,18 +619,18 @@ public sealed partial class ChatSystem : SharedChatSystem
         name = FormattedMessage.EscapeText(name);
 
         // Starlight - Start
-        var wrappedMessage = WrapPublicMessage(source, name, message.text, language: language); // Starlight
+        var wrappedMessage = WrapPublicMessage(source, name, message.Text, language: language); // Starlight
         // The chat message obfuscated via language obfuscation.
-        var obfuscated = SanitizeInGameICMessage(source, _language.ObfuscateSpeech(message.text, language), out var emoteStr, true, _configurationManager.GetCVar(CCVars.ChatPunctuation), // Starlight
+        var obfuscated = SanitizeInGameICMessage(source, _language.ObfuscateSpeech(message.Text, language), out var emoteStr, true, _configurationManager.GetCVar(CCVars.ChatPunctuation), // Starlight
         (!CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Parent.Name == "en")
         || (CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Name == "en"));
         // The language-obfuscated message wrapped in a "x says y" string.
         var wrappedObfuscated = WrapPublicMessage(source, name, obfuscated, language: language, obfuscated: true);
         // Starlight End
 
-        SendInVoiceRange(ChatChannel.Local, name, message.text, wrappedMessage, obfuscated, wrappedObfuscated, source, range, languageOverride: language); // Starlight-edit: Languages
+        SendInVoiceRange(ChatChannel.Local, name, message.Text, wrappedMessage, obfuscated, wrappedObfuscated, source, range, languageOverride: language); // Starlight-edit: Languages
 
-        var ev = new EntitySpokeEvent(source, message.text, message.ttsText, null, null, false, language); // Starlight-edit: Languages
+        var ev = new EntitySpokeEvent(source, message, null, null, false, language); // Starlight-edit: Languages
         RaiseLocalEvent(source, ev, true);
 
         // To avoid logging any messages sent by entities that are not players, like vendors, cloning, etc.
@@ -634,27 +638,27 @@ public sealed partial class ChatSystem : SharedChatSystem
         if (!HasComp<ActorComponent>(source) || hideLog)
             return;
 
-        if (originalMessage == message.text) // Starlight
+        if (original == message.Text) // Starlight
         {
             if (name != Name(source))
-                _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Say from {source} as {name}: {originalMessage}.");
+                _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Say from {source} as {name}: {original}."); // Starlight
             else
-                _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Say from {source}: {originalMessage}.");
+                _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Say from {source}: {original}.");  // Starlight
         }
         else
         {
             if (name != Name(source))
                 _adminLogger.Add(LogType.Chat, LogImpact.Low,
-                    $"Say from {source} as {name}, original: {originalMessage}, transformed: {message}.");
+                    $"Say from {source} as {name}, original: {original}, transformed: {message}."); // Starlight
             else
                 _adminLogger.Add(LogType.Chat, LogImpact.Low,
-                    $"Say from {source}, original: {originalMessage}, transformed: {message}.");
+                    $"Say from {source}, original: {original}, transformed: {message}."); // Starlight
         }
     }
 
     private void SendEntityWhisper(
         EntityUid source,
-        string originalMessage,
+        SpeechMessage message, // Starlight
         ChatTransmitRange range,
         RadioChannelPrototype? channel,
         string? nameOverride,
@@ -666,8 +670,10 @@ public sealed partial class ChatSystem : SharedChatSystem
         if (!_actionBlocker.CanSpeak(source) && !ignoreActionBlocker)
             return;
 
-        var message = TransformSpeech(source, FormattedMessage.RemoveMarkupOrThrow(originalMessage), language); // Starlight
-        if (message.text.Length == 0) // Starlight
+        var original = message.Text; // Starlight
+        message.Text = FormattedMessage.RemoveMarkupOrThrow(message.Text);
+        message = TransformSpeech(source, message, language); // Starlight-edit: Languages, tts v5.0
+        if (message.Text.Length == 0) // Starlight
             return;
 
         // get the entity's name by visual identity (if no override provided).
@@ -686,7 +692,7 @@ public sealed partial class ChatSystem : SharedChatSystem
         }
         name = FormattedMessage.EscapeText(name);
 
-        var languageObfuscatedMessage = SanitizeInGameICMessage(source, _language.ObfuscateSpeech(message.text , language), out var emoteStr, true, _configurationManager.GetCVar(CCVars.ChatPunctuation),
+        var languageObfuscatedMessage = SanitizeInGameICMessage(source, _language.ObfuscateSpeech(message.Text, language), out var emoteStr, true, _configurationManager.GetCVar(CCVars.ChatPunctuation),
         (!CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Parent.Name == "en")
         || (CultureInfo.CurrentCulture.IsNeutralCulture && CultureInfo.CurrentCulture.Name == "en")); // Starlight
 
@@ -702,7 +708,7 @@ public sealed partial class ChatSystem : SharedChatSystem
             // Starlight - Start
             var canUnderstandLanguage = _language.CanUnderstand(listener, language.ID);
             // How the entity perceives the message depends on whether it can understand its language
-            var perceivedMessage = canUnderstandLanguage ? message.text : languageObfuscatedMessage; // Starlight
+            var perceivedMessage = canUnderstandLanguage ? message.Text : languageObfuscatedMessage; // Starlight
             var obfuscated = canUnderstandLanguage != true;
 
             // Result is the intermediate message derived from the perceived one via obfuscation
@@ -731,27 +737,27 @@ public sealed partial class ChatSystem : SharedChatSystem
             // Starlight - End
         }
 
-        var replayWrap = WrapWhisperMessage(source, "chat-manager-entity-whisper-wrap-message", name, message.text, language); // Starlight-edit: Languages
-        _replay.RecordServerMessage(new ChatMessage(ChatChannel.Whisper, message.text, replayWrap, GetNetEntity(source), null, MessageRangeHideChatForReplay(range))); // Starlight-edit: Languages
+        var replayWrap = WrapWhisperMessage(source, "chat-manager-entity-whisper-wrap-message", name, message.Text, language); // Starlight-edit: Languages
+        _replay.RecordServerMessage(new ChatMessage(ChatChannel.Whisper, message.Text, replayWrap, GetNetEntity(source), null, MessageRangeHideChatForReplay(range))); // Starlight-edit: Languages
 
-        var ev = new EntitySpokeEvent(source, message.text, message.ttsText, channel, languageObfuscatedMessage, true, language); // Starlight-edit: Languages
+        var ev = new EntitySpokeEvent(source, message, channel, languageObfuscatedMessage, true, language); // Starlight-edit: Languages
         RaiseLocalEvent(source, ev, true);
         if (!hideLog)
-            if (originalMessage == message.text) // Starlight
+            if (original == message.Text) // Starlight
             {
                 if (name != Name(source))
-                    _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Whisper from {source} as {name}: {originalMessage}.");
+                    _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Whisper from {source} as {name}: {original}.");
                 else
-                    _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Whisper from {source}: {originalMessage}.");
+                    _adminLogger.Add(LogType.Chat, LogImpact.Low, $"Whisper from {source}: {original}.");
             }
             else
             {
                 if (name != Name(source))
                     _adminLogger.Add(LogType.Chat, LogImpact.Low,
-                    $"Whisper from {source} as {name}, original: {originalMessage}, transformed: {message}.");
+                    $"Whisper from {source} as {name}, original: {original}, transformed: {message}.");
                 else
                     _adminLogger.Add(LogType.Chat, LogImpact.Low,
-                    $"Whisper from {source}, original: {originalMessage}, transformed: {message}.");
+                    $"Whisper from {source}, original: {original}, transformed: {message}.");
             }
     }
 
@@ -996,15 +1002,15 @@ public sealed partial class ChatSystem : SharedChatSystem
         return newMessage;
     }
 
-    public (string text, string ttsText) TransformSpeech(EntityUid sender, string message, LanguagePrototype language) // Starlight
+    public SpeechMessage TransformSpeech(EntityUid sender, SpeechMessage message, LanguagePrototype language) // Starlight
     {
         if (!language.SpeechOverride.RequireSpeech) // Starlight
-            return (message, message); // Do not apply speech accents if there's no speech involved.
+            return message; // Do not apply speech accents if there's no speech involved.
 
-        var ev = new TransformSpeechEvent(sender, message, message);
+        var ev = new TransformSpeechEvent(sender, message); // Starlight
         RaiseLocalEvent(ev);
 
-        return (ev.Message, ev.TTSMessage);// Starlight
+        return ev.Message;// Starlight
     }
 
     public bool CheckIgnoreSpeechBlocker(EntityUid sender, bool ignoreBlocker)

@@ -1,4 +1,5 @@
 using Content.Server.Chat.Systems;
+using Content.Shared._Starlight.Speech;
 using Content.Shared.Actions.Events;
 using Content.Shared.Chat;
 using Content.Shared.Speech;
@@ -33,6 +34,13 @@ public sealed class SpeakOnActionSystem : SharedSpeakOnActionSystem
 
         if (string.IsNullOrWhiteSpace(ent.Comp.Sentence))
             return;
+
+        var message = new SpeechMessage
+        {
+            Text = Loc.GetString(ent.Comp.Sentence),
+            Tts = ent.Comp.Tts.HasValue ? Loc.GetString(ent.Comp.Tts) : Loc.GetString(ent.Comp.Sentence),
+            Modifier = ent.Comp.Modifier,
+        };
 
         _chat.TrySendInGameICMessage(user, Loc.GetString(ent.Comp.Sentence), InGameICChatType.Speak, false);
     }

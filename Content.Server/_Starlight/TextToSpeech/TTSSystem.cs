@@ -32,7 +32,7 @@ public sealed partial class TTSSystem : EntitySystem
         "The singularity has reached the arrivals area!",
     ];
 
-    private const int DefaultAnnounceVoice = 510000;
+    private const int DefaultAnnounceVoice = 2001;
     private const int DefaultVoice = 0;
     private const int MaxChars = 200;
     private const float WhisperVoiceVolumeModifier = 0.6f;
@@ -131,12 +131,9 @@ public sealed partial class TTSSystem : EntitySystem
         {
             var text = CleanText(args.Message);
             var filter = args.Receivers.RemovePlayers(_ignoredRecipients);
-            var fallbackVoice = _prototypeManager.TryIndex(args.AnnounceVoice ?? "", out VoicePrototype? proto)
-                ? proto.Voice
-                : DefaultAnnounceVoice;
             var voice = args.SpeakerUid.HasValue
-                ? GetOrAssignVoice(GetEntity(args.SpeakerUid.Value), fallbackVoice: fallbackVoice)
-                : fallbackVoice;
+                ? GetOrAssignVoice(GetEntity(args.SpeakerUid.Value), fallbackVoice: DefaultAnnounceVoice)
+                : DefaultAnnounceVoice;
 
             await GenerateAndStream(TTSType.Announcement, voice, text, filter, TTSEffect.Megaphone, args.AnnouncementSound);
         }

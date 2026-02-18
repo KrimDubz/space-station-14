@@ -20,6 +20,7 @@ using Content.Shared._Starlight.Language;
 using Content.Shared._Starlight.Language.Systems;
 using Content.Shared.CollectiveMind;
 using Robust.Shared.Serialization;
+using Content.Shared._Starlight.Speech;
 #endregion Starlight
 
 namespace Content.Shared.Chat;
@@ -447,7 +448,7 @@ public abstract partial class SharedChatSystem : EntitySystem
     /// <param name="languageOverride">Interpret this message as being in the specified language</param> // Starlight
     public virtual void TrySendInGameICMessage(
         EntityUid source,
-        string message,
+        SpeechMessage message, // Starlight
         InGameICChatType desiredType,
         ChatTransmitRange range,
         bool hideLog = false,
@@ -492,7 +493,8 @@ public abstract partial class SharedChatSystem : EntitySystem
         string? sender = null,
         bool playSound = true,
         SoundSpecifier? announcementSound = null,
-        Color? colorOverride = null
+        Color? colorOverride = null,
+        EntityUid? speaker = null // Starlight
         )
     { }
 
