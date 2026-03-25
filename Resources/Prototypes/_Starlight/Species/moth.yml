@@ -11,13 +11,13 @@
   maleFirstNames: NamesMothFirstMale
   femaleFirstNames: NamesMothFirstFemale
   lastNames: NamesMothLast
-  customName: true # Starlight
+  customName: true
 
 - type: speciesBaseSprites
   id: MobMothSprites
   sprites:
     Head: MobMothHead
-    Hair: MobHumanoidAnyMarking # Starlight
+    Hair: MobHumanoidAnyMarking
     Snout: MobHumanoidAnyMarking
     UndergarmentTop: MobHumanoidAnyMarking
     UndergarmentBottom: MobHumanoidAnyMarking
@@ -43,10 +43,9 @@
 
 - type: markingPoints
   id: MobMothMarkingLimits
-  #onlyWhitelisted: true // Starlight removal
   points:
     Hair:
-      points: 1 # Starlight
+      points: 1 
       required: false
     FacialHair:
       points: 0
